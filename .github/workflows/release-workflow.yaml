@@ -34,7 +34,7 @@ jobs:
         run: echo "version=${GITHUB_REF#refs/tags/}" >> $GITHUB_OUTPUT
           
       - name: Generate Changelog
-        uses: github-changelog-generator/github-changelog-generator@v1.16.5
+        uses: github-changelog-generator/github-changelog-generator@v1.16.4
         with:
           user: ${{ github.repository_owner }}
           project: ${{ github.event.repository.name }}
