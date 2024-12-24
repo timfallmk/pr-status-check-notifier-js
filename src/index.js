@@ -1,6 +1,70 @@
 const core = require('@actions/core');
 const github = require('@actions/github');
 
+async function sleep(ms) {
+  return new Promise(resolve => setTimeout(resolve, ms));
+}
+
+async function checkStatus(octokit, context, sha, excludedChecks) {
+  // Get both status checks and check runs
+  const [statusData, checksData] = await Promise.all([
+    octokit.rest.repos.getCombinedStatusForRef({
+      ...context.repo,
+      ref: sha
+    }),
+    octokit.rest.checks.listForRef({
+      ...context.repo,
+      ref: sha
+    })
+  ]);
+
+  // Combine and filter checks
+  const relevantChecks = [
+    ...statusData.data.statuses,
+    ...checksData.data.check_runs
+  ].filter(check => {
+    const checkName = check.name || check.context;
+    return !excludedChecks.some(excluded =>
+      checkName?.toLowerCase().includes(excluded.toLowerCase())
+    );
+  });
+
+  console.log('Non-excluded checks count:', relevantChecks.length);
+
+  const successfulConclusions = ['success', 'skipped', 'neutral'];
+  let pendingChecks = [];
+  let failedChecks = [];
+
+  const checkResults = relevantChecks.map(check => {
+    const isCheckRun = 'conclusion' in check;
+    const name = check.name || check.context;
+    const status = isCheckRun ? check.status : 'completed';
+    const conclusion = isCheckRun ? check.conclusion : check.state;
+
+    const isPassed = status === 'completed' && successfulConclusions.includes(conclusion);
+    const isPending = status !== 'completed' || conclusion === null;
+
+    if (isPending) {
+      pendingChecks.push(name);
+    } else if (!isPassed) {
+      failedChecks.push(name);
+    }
+
+    console.log(`Check "${name}": ${status}/${conclusion} (${isPassed ? '✅' : isPending ? '⏳' : '❌'})`);
+    return { isPassed, isPending, name };
+  });
+
+  const allCompleted = !checkResults.some(r => r.isPending);
+  const allPassed = checkResults.length > 0 && checkResults.every(r => r.isPassed);
+
+  return {
+    allCompleted,
+    allPassed,
+    pendingChecks,
+    failedChecks,
+  };
+}
+
 async function run() {
   try {
     console.log('\n::notice::Starting PR status check...');
@@ -9,6 +73,8 @@ async function run() {
     const token = core.getInput('github-token', { required: true });
     const excludedChecks = core.getInput('excluded-checks').split(',').map(s => s.trim());
     const notificationTemplate = core.getInput('notification-message');
+    const maxWaitMinutes = parseInt(core.getInput('max-wait-minutes') || '30', 10);
+    const pollInterval = parseInt(core.getInput('poll-interval-seconds') || '30', 10);
 
     const octokit = github.getOctokit(token);
     const context = github.context;
@@ -27,7 +93,6 @@ async function run() {
       sha = context.payload.sha;
       console.log('Status event detected:', { sha });
     } else if (context.eventName === 'workflow_dispatch') {
-      // For workflow_dispatch, we need to get the current commit SHA
       sha = context.sha;
       console.log('Workflow dispatch event detected:', { sha });
     } else {
@@ -38,7 +103,6 @@ async function run() {
         eventName: context.eventName,
         payload: context.payload
       });
-      // Try to get SHA from context
       sha = context.sha;
     }
 
@@ -72,79 +136,63 @@ async function run() {
     }
 
     console.log(`\n::notice::Found PR #${pr.number}: ${pr.title}`);
-    console.log('Fetching status checks...');
+    console.log('Starting check status monitoring...');
 
-    // Get both status checks and check runs
-    const [statusData, checksData] = await Promise.all([
-      octokit.rest.repos.getCombinedStatusForRef({
-        ...context.repo,
-        ref: sha
-      }),
-      octokit.rest.checks.listForRef({
-        ...context.repo,
-        ref: sha
-      })
-    ]);
+    const startTime = Date.now();
+    const timeout = maxWaitMinutes * 60 * 1000;
+    let lastPendingMessage = '';
 
-    // Combine and filter checks
-    const relevantChecks = [
-      ...statusData.data.statuses,
-      ...checksData.data.check_runs
-    ].filter(check => {
-      const checkName = check.name || check.context;
-      return !excludedChecks.some(excluded =>
-        checkName?.toLowerCase().includes(excluded.toLowerCase())
-      );
-    });
+    while (true) {
+      const elapsed = Date.now() - startTime;
+      if (elapsed > timeout) {
+        console.log('\n::warning::⌛ Timed out waiting for checks to complete');
+        core.setFailed(`Timed out after ${maxWaitMinutes} minutes`);
+        return;
+      }
 
-    console.log('Non-excluded checks count:', relevantChecks.length);
+      const status = await checkStatus(octokit, context, sha, excludedChecks);
 
-    const successfulConclusions = ['success', 'skipped', 'neutral'];
+      if (status.allCompleted) {
+        if (status.allPassed) {
+          console.log('\n::notice::✅ All non-excluded checks have passed!');
 
-    console.log('\n::notice::Checking status of all checks...');
-    const allPassed = relevantChecks.length > 0 && relevantChecks.every(check => {
-      const isCheckRun = 'conclusion' in check;
+          // Check for existing notification
+          const comments = await octokit.rest.issues.listComments({
+            ...context.repo,
+            issue_number: pr.number
+          });
 
-      let isPassed;
-      if (isCheckRun) {
-        isPassed = check.status === 'completed' && successfulConclusions.includes(check.conclusion);
+          const hasNotification = comments.data.some(comment =>
+            comment.body.includes('All checks have passed!')
+          );
+
+          if (!hasNotification) {
+            console.log('Creating notification comment...');
+            const message = notificationTemplate.replace('{user}', pr.user.login);
+            await octokit.rest.issues.createComment({
+              ...context.repo,
+              issue_number: pr.number,
+              body: message
+            });
+            console.log('Notification created successfully');
+          }
+          return;
+        } else {
+          console.log('\n::error::❌ Some checks failed:');
+          status.failedChecks.forEach(check => {
+            console.log(`  - ${check}`);
+          });
+          core.setFailed('Some checks failed');
+          return;
+        }
       } else {
-        isPassed = successfulConclusions.includes(check.state);
+        const pendingMessage = `⏳ Waiting for checks to complete (${Math.floor(elapsed / 1000)}s elapsed): ${status.pendingChecks.join(', ')}`;
+        if (pendingMessage !== lastPendingMessage) {
+          console.log('\n::notice::' + pendingMessage);
+          lastPendingMessage = pendingMessage;
+        }
+        await sleep(pollInterval * 1000);
       }
-
-      const statusInfo = isCheckRun
-        ? `${check.status}/${check.conclusion}`
-        : check.state;
-
-      console.log(`Check "${check.name || check.context}": ${statusInfo} (${isPassed ? '✅' : '❌'})`);
-      return isPassed;
-    });
-
-    if (allPassed) {
-      console.log('\n::notice::✅ All non-excluded checks have passed!');
-      console.log('Checking for existing notifications...');
-
-      const comments = await octokit.rest.issues.listComments({
-        ...context.repo,
-        issue_number: pr.number
-      });
-
-      const hasNotification = comments.data.some(comment =>
-        comment.body.includes('All checks have passed!')
-      );
-
-      if (!hasNotification) {
-        console.log('Creating notification comment...');
-        const message = notificationTemplate.replace('{user}', pr.user.login);
-        await octokit.rest.issues.createComment({
-          ...context.repo,
-          issue_number: pr.number,
-          body: message
-        });
-        console.log('Notification created successfully');
-      }
-    } else {
-      console.log('\n::warning::⏳ Some checks are still pending or failed');
     }
   } catch (error) {
     console.log('\n::error::Error in workflow:', error);

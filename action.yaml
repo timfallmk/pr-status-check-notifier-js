@@ -1,6 +1,6 @@
-name: 'PR Check Status Notifier JS'
+name: 'PR Check Status Notifier'
 description: 'Monitors PR checks and notifies when all checks (except specified ones) have passed'
-author: 'Tim Fall'
+author: 'Your Name'
 
 inputs:
   github-token:
@@ -15,6 +15,14 @@ inputs:
     description: 'Custom notification message (use {user} for PR owner mention)'
     required: false
     default: '@{user} All checks have passed! ✅\nThis PR is ready for `atlantis apply` and merge.\n\n*Note*: The `atlantis apply` status check will show as passed after running the command.'
+  max-wait-minutes:
+    description: 'Maximum time to wait for checks to complete in minutes'
+    required: false
+    default: '30'
+  poll-interval-seconds:
+    description: 'How often to check status in seconds'
+    required: false
+    default: '30'
 
 runs:
   using: 'node20'
