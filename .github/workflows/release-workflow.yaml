@@ -1,0 +1,69 @@
+name: Release Action
+
+on:
+  push:
+    tags:
+      - 'v*'  # Trigger on version tags
+
+permissions:
+  contents: write  # Needed for creating releases
+  pull-requests: read  # Needed for changelog generation
+  issues: read  # Needed for changelog generation
+
+jobs:
+  build-and-release:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          fetch-depth: 0  # Required for changelog generation
+      
+      - name: Setup Node.js
+        uses: actions/setup-node@v4
+        with:
+          node-version: '20'
+          
+      - name: Install dependencies
+        run: npm ci
+          
+      - name: Build
+        run: npm run build
+          
+      - name: Get tag version
+        id: get_tag
+        run: echo "version=${GITHUB_REF#refs/tags/}" >> $GITHUB_OUTPUT
+          
+      - name: Generate Changelog
+        uses: github-changelog-generator/github-changelog-generator@v1.16.5
+        with:
+          user: ${{ github.repository_owner }}
+          project: ${{ github.event.repository.name }}
+          token: ${{ secrets.GITHUB_TOKEN }}
+          future-release: ${{ steps.get_tag.outputs.version }}
+          since-tag: "v0.0.0"
+          breaking-labels: 'breaking'
+          enhancement-labels: 'enhancement'
+          bug-labels: 'bug'
+          security-labels: 'security'
+          issues-labels: 'issues'
+          pr-labels: 'pr'
+          configure-sections: '{"documentation":{"prefix":"### 📚 Documentation","labels":["documentation"]},"dependencies":{"prefix":"### ⬆️ Dependencies","labels":["dependencies"]}}'
+          
+      - name: Create Release
+        uses: softprops/action-gh-release@v1
+        with:
+          name: Release ${{ steps.get_tag.outputs.version }}
+          body_path: CHANGELOG.md
+          files: |
+            dist/**/*
+            action.yml
+            LICENSE
+            README.md
+          draft: false
+          prerelease: false
+          
+      - name: Generate major version tag
+        run: |
+          major_version=$(echo "${{ steps.get_tag.outputs.version }}" | cut -d. -f1)
+          git tag -f "${major_version}" refs/tags/${{ steps.get_tag.outputs.version }}
+          git push -f origin "${major_version}"

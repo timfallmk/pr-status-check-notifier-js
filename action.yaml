@@ -1,0 +1,25 @@
+name: 'PR Check Status Notifier'
+description: 'Monitors PR checks and notifies when all checks (except specified ones) have passed'
+author: 'Your Name'
+
+inputs:
+  github-token:
+    description: 'GitHub token for API access'
+    required: true
+    default: ${{ github.token }}
+  excluded-checks:
+    description: 'Comma-separated list of check names to exclude'
+    required: false
+    default: 'atlantis/apply,Check Status & Notify'
+  notification-message:
+    description: 'Custom notification message (use {user} for PR owner mention)'
+    required: false
+    default: '@{user} All checks have passed! ✅\nThis PR is ready for `atlantis apply` and merge.\n\n*Note*: The `atlantis apply` status check will show as passed after running the command.'
+
+runs:
+  using: 'node20'
+  main: 'dist/index.js'
+
+branding:
+  icon: 'check-circle'
+  color: 'green'
