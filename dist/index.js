@@ -34450,6 +34450,24 @@ const { Octokit } = __nccwpck_require__(5772);
 const core = __nccwpck_require__(7484);
 const github = __nccwpck_require__(3228);
 
+// Add at the top with other constants
+const sentNotifications = new Set();
+
+// Add helper function
+function createNotificationId(check) {
+  return `${check.name}-${check.status}-${check.conclusion || ''}-${check.started_at || ''}-${check.completed_at || ''}`;
+}
+
+function isNotificationDuplicate(check) {
+  const notificationId = createNotificationId(check);
+  if (sentNotifications.has(notificationId)) {
+    core.debug(`Skipping duplicate notification for ${check.name}`);
+    return true;
+  }
+  sentNotifications.add(notificationId);
+  return false;
+}
+
 // Get inputs with core helpers
 const token = core.getInput('github-token', { required: true });
 const excludedChecks = core.getInput('excluded-checks').split(',').filter(Boolean);
@@ -34657,11 +34675,7 @@ async function run() {
 
             // Create success notification
             const message = core.getInput('notification-message').replace('{user}', context.actor);
-            await octokit.rest.issues.createComment({
-              ...context.repo,
-              issue_number: prNumber,
-              body: message
-            });
+            await createComment(octokit, context, prNumber, message);
 
             hasNotified = true;
             return;
@@ -34686,7 +34700,35 @@ async function run() {
   }
 }
 
+// Clean up old notifications periodically (optional)
+setInterval(() => {
+  const oneHourAgo = Date.now() - (60 * 60 * 1000);
+  sentNotifications.clear();
+}, 60 * 60 * 1000); // Clean every hour
+
 run();
+
+function processNotificationBody(body) {
+  return body
+    // Convert escaped newlines to actual newlines
+    .replace(/\\n/g, '\n')
+    // Convert escaped tabs to actual tabs  
+    .replace(/\\t/g, '\t')
+    // Convert Unicode escape sequences
+    .replace(/\\u[\dA-F]{4}/gi, match => 
+      String.fromCharCode(parseInt(match.replace(/\\u/g, ''), 16))
+    )
+    // Unescape other characters
+    .replace(/\\(.)/g, '$1');
+}
+
+async function createComment(octokit, context, prNumber, body) {
+  await octokit.rest.issues.createComment({
+    ...context.repo,
+    issue_number: prNumber,
+    body: processNotificationBody(body)
+  });
+}
 module.exports = __webpack_exports__;
 /******/ })()
 ;
