@@ -34457,9 +34457,16 @@ const pollInterval = parseInt(core.getInput('poll-interval') || '30', 10) * 1000
 const timeoutMinutes = parseInt(core.getInput('timeout') || '30', 10);
 
 async function checkStatus(octokit, context) {
+  let sha = context.sha;
+  
+  // If this is a PR event, use the PR head SHA
+  if (context.payload.pull_request) {
+    sha = context.payload.pull_request.head.sha;
+  }
+  
   core.info('Starting check status...');
   core.info(`Repository: ${context.repo.owner}/${context.repo.repo}`);
-  core.info(`Getting status and checks for SHA: ${context.sha}`);
+  core.info(`Getting status and checks for SHA: ${sha}`);
   core.info(`Excluded checks: ${excludedChecks.join(', ')}`);
 
   try {
@@ -34467,14 +34474,14 @@ async function checkStatus(octokit, context) {
     core.info('Fetching status checks...');
     const statusData = await octokit.rest.repos.getCombinedStatusForRef({
       ...context.repo,
-      ref: context.sha
+      ref: sha
     });
     core.info(`Status API Response: ${JSON.stringify(statusData.data, null, 2)}`);
 
     core.info('Fetching check runs...');
     const checksData = await octokit.rest.checks.listForRef({
       ...context.repo,
-      ref: context.sha
+      ref: sha
     });
     core.info(`Checks API Response: ${JSON.stringify(checksData.data, null, 2)}`);
 
