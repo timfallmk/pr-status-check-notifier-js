@@ -34457,6 +34457,9 @@ const pollInterval = parseInt(core.getInput('poll-interval') || '30', 10) * 1000
 const timeoutMinutes = parseInt(core.getInput('timeout') || '30', 10);
 
 async function checkStatus(octokit, context) {
+  core.info(`Getting status and checks for SHA: ${context.sha}`);
+  core.info(`Excluded checks: ${excludedChecks.join(', ')}`);
+
   const [statusData, checksData] = await Promise.all([
     octokit.rest.repos.getCombinedStatusForRef({
       ...context.repo,
@@ -34468,18 +34471,33 @@ async function checkStatus(octokit, context) {
     })
   ]);
 
+  core.info(`Found ${statusData.data.statuses.length} status checks and ${checksData.data.check_runs.length} check runs`);
+
+  // Log all found checks before filtering
+  statusData.data.statuses.forEach(status => {
+    core.info(`Status check found: ${status.context} (${status.state})`);
+  });
+
+  checksData.data.check_runs.forEach(check => {
+    core.info(`Check run found: ${check.name} (${check.status}/${check.conclusion})`);
+  });
+
   // Combine and filter checks
   const relevantChecks = [
     ...statusData.data.statuses,
     ...checksData.data.check_runs
   ].filter(check => {
     const checkName = check.name || check.context;
-    return !excludedChecks.some(excluded =>
+    const isExcluded = excludedChecks.some(excluded =>
       checkName?.toLowerCase().includes(excluded.toLowerCase())
     );
+    if (isExcluded) {
+      core.info(`Excluding check: ${checkName}`);
+    }
+    return !isExcluded;
   });
 
-  console.log(`Found ${relevantChecks.length} relevant checks`);
+  core.info(`Found ${relevantChecks.length} relevant checks after filtering`);
 
   const successfulConclusions = ['success', 'skipped', 'neutral'];
   const pendingChecks = [];
@@ -34524,6 +34542,12 @@ async function run() {
   try {
     const octokit = github.getOctokit(token);
     const context = github.context;
+
+    core.info('Context info:');
+    core.info(`Event name: ${context.eventName}`);
+    core.info(`SHA: ${context.sha}`);
+    core.info(`Ref: ${context.ref}`);
+    core.info(`Repo: ${context.repo.owner}/${context.repo.repo}`);
 
     let prNumber;
 
