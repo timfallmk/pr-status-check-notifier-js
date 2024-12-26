@@ -1,6 +1,6 @@
-name: 'PR Check Status Notifier'
+name: 'PR Check Status Notifier JS'
 description: 'Monitors PR checks and notifies when all checks (except specified ones) have passed'
-author: 'Your Name'
+author: 'Tim Fall'
 
 inputs:
   github-token:
