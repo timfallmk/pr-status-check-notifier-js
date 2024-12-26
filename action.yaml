@@ -1,6 +1,6 @@
 name: 'PR Check Status Notifier JS'
 description: 'Monitors PR checks and notifies when all checks (except specified ones) have passed'
-author: 'Your Name'
+author: 'Tim Fall'
 
 inputs:
   github-token:
@@ -15,19 +15,35 @@ inputs:
     description: 'Custom notification message (use {user} for PR owner mention)'
     required: false
     default: '@{user} All checks have passed! ✅\nThis PR is ready for `atlantis apply` and merge.\n\n*Note*: The `atlantis apply` status check will show as passed after running the command.'
-  timeout:
-    description: 'Maximum time to wait for checks to complete in minutes'
+  poll-interval:
+    description: 'Polling interval in seconds'
     required: false
     default: '30'
-  poll-interval:
-    description: 'How often to check status in seconds'
+  timeout:
+    description: 'Maximum time to wait in minutes'
     required: false
     default: '30'
 
 runs:
-  using: 'node20'
-  main: 'dist/index.js'
-
-branding:
-  icon: 'check-circle'
-  color: 'green'
+  using: 'composite'
+  steps:
+    - uses: actions/setup-node@v4
+      with:
+        node-version: '20'
+    
+    - name: Install dependencies
+      shell: bash
+      working-directory: ${{ github.action_path }}
+      run: |
+        npm init -y
+        npm install @octokit/rest
+    
+    - name: Run status checker
+      shell: bash
+      run: node ${{ github.action_path }}/poll-checks.js
+      env:
+        GITHUB_TOKEN: ${{ inputs.github-token }}
+        EXCLUDED_CHECKS: ${{ inputs.excluded-checks }}
+        POLL_INTERVAL: ${{ inputs.poll-interval }}
+        TIMEOUT_MINUTES: ${{ inputs.timeout }}
+        NOTIFICATION_MESSAGE: ${{ inputs.notification-message }}
