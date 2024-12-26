@@ -34555,6 +34555,43 @@ async function run() {
       prNumber = context.payload.pull_request.number;
       core.info(`Found PR number from pull_request event: ${prNumber}`);
     } else {
+      // Log all open PRs to debug
+      const { data: allPrs } = await octokit.rest.pulls.list({
+        ...context.repo,
+        state: 'open'
+      });
+
+      core.info(`Found ${allPrs.length} open PRs:`);
+      allPrs.forEach(pr => {
+        core.info(`PR #${pr.number}: ${pr.head.sha} (${pr.title})`);
+      });
+
+      // Try to find PR from current SHA
+      const matchingPr = allPrs.find(pr => pr.head.sha === context.sha);
+
+      if (!matchingPr) {
+        core.setFailed(`No matching PR found for SHA: ${context.sha}`);
+        return;
+      }
+      prNumber = matchingPr.number;
+      core.info(`Found matching PR #${prNumber}`);
+
+      // Get all checks for this PR
+      const { data: checks } = await octokit.rest.checks.listForRef({
+        ...context.repo,
+        ref: matchingPr.head.sha
+      });
+
+      core.info('Available check runs:');
+      checks.check_runs.forEach(check => {
+        core.info(`- ${check.name}: ${check.status}/${check.conclusion}`);
+      });
+    }
+
+    if (context.eventName === 'pull_request') {
+      prNumber = context.payload.pull_request.number;
+      core.info(`Found PR number from pull_request event: ${prNumber}`);
+    } else {
       // Try to find PR from current SHA
       const { data: prs } = await octokit.rest.pulls.list({
         ...context.repo,
