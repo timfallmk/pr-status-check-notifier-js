@@ -46,6 +46,8 @@ jobs:
 | `github-token` | GitHub token for API access | Yes | `${{ github.token }}` |
 | `excluded-checks` | Comma-separated list of check names to exclude | No | `atlantis/apply,Check Status & Notify` |
 | `notification-message` | Custom notification message (use {user} for PR owner mention) | No | Default message about checks passing |
+| `poll-interval` | Polling interval in seconds | No | 30
+| `timeout` | Maximum time to wait in minutes | No | 30
 
 ## Development
 
@@ -66,4 +68,4 @@ Contributions are welcome! Please read our [Contributing Guidelines](CONTRIBUTIN
 
 ## License
 
-MIT
+GPLv3
