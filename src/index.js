@@ -1,18 +1,37 @@
-const core = require('@actions/core');
-const github = require('@actions/github');
+const { Octokit } = require('@octokit/rest');
 
-const STATUS_COMMENT_MARKER = '<!-- PR-STATUS-CHECK -->';
+// Get configuration from environment variables with defaults
+const config = {
+  token: process.env.GITHUB_TOKEN,
+  excludedChecks: (process.env.EXCLUDED_CHECKS || '').split(',').filter(Boolean),
+  pollInterval: parseInt(process.env.POLL_INTERVAL || '30', 10) * 1000, // Convert to milliseconds
+  timeoutMinutes: parseInt(process.env.TIMEOUT_MINUTES || '30', 10),
+  notificationMessage: process.env.NOTIFICATION_MESSAGE
+};
 
-async function getCurrentStatus(octokit, context, sha, excludedChecks) {
+// GitHub context is available in Actions environment
+const context = {
+  owner: process.env.GITHUB_REPOSITORY.split('/')[0],
+  repo: process.env.GITHUB_REPOSITORY.split('/')[1],
+  sha: process.env.GITHUB_SHA,
+  eventName: process.env.GITHUB_EVENT_NAME,
+  prNumber: process.env.GITHUB_EVENT_NAME === 'pull_request'
+    ? process.env.GITHUB_EVENT_NUMBER
+    : null
+};
+
+async function checkStatus(octokit) {
   // Get both status checks and check runs
   const [statusData, checksData] = await Promise.all([
-    octokit.rest.repos.getCombinedStatusForRef({
-      ...context.repo,
-      ref: sha
+    octokit.repos.getCombinedStatusForRef({
+      owner: context.owner,
+      repo: context.repo,
+      ref: context.sha
     }),
-    octokit.rest.checks.listForRef({
-      ...context.repo,
-      ref: sha
+    octokit.checks.listForRef({
+      owner: context.owner,
+      repo: context.repo,
+      ref: context.sha
     })
   ]);
 
@@ -22,12 +41,10 @@ async function getCurrentStatus(octokit, context, sha, excludedChecks) {
     ...checksData.data.check_runs
   ].filter(check => {
     const checkName = check.name || check.context;
-    return !excludedChecks.some(excluded =>
+    return !config.excludedChecks.some(excluded =>
       checkName?.toLowerCase().includes(excluded.toLowerCase())
     );
   });
-
-  console.log('Non-excluded checks count:', relevantChecks.length);
 
   const successfulConclusions = ['success', 'skipped', 'neutral'];
   let pendingChecks = [];
@@ -54,169 +71,86 @@ async function getCurrentStatus(octokit, context, sha, excludedChecks) {
     console.log(`Check "${name}": ${status}/${conclusion} (${isPassed ? '✅' : isPending ? '⏳' : '❌'})`);
   });
 
-  const allCompleted = pendingChecks.length === 0;
-  const allPassed = allCompleted && failedChecks.length === 0 && passedChecks.length > 0;
-
   return {
-    allCompleted,
-    allPassed,
-    pendingChecks,
-    failedChecks,
-    passedChecks,
+    allCompleted: pendingChecks.length === 0,
+    allPassed: pendingChecks.length === 0 && failedChecks.length === 0 && passedChecks.length > 0,
+    pending: pendingChecks,
+    failed: failedChecks,
+    passed: passedChecks,
     total: relevantChecks.length
   };
 }
 
-async function updateStatusComment(octokit, context, pr, status) {
-  const statusEmoji = status.allPassed ? '✅' : status.failedChecks.length > 0 ? '❌' : '⏳';
-  let statusMessage = `${STATUS_COMMENT_MARKER}\n### PR Status Check ${statusEmoji}\n\n`;
-
-  if (status.passedChecks.length > 0) {
-    statusMessage += `**Passed Checks:**\n${status.passedChecks.map(c => `- ${c} ✅`).join('\n')}\n\n`;
-  }
-
-  if (status.pendingChecks.length > 0) {
-    statusMessage += `**Pending Checks:**\n${status.pendingChecks.map(c => `- ${c} ⏳`).join('\n')}\n\n`;
-  }
-
-  if (status.failedChecks.length > 0) {
-    statusMessage += `**Failed Checks:**\n${status.failedChecks.map(c => `- ${c} ❌`).join('\n')}\n\n`;
-  }
-
-  statusMessage += `Last updated: ${new Date().toISOString()}`;
-
-  // Find existing status comment
-  const comments = await octokit.rest.issues.listComments({
-    ...context.repo,
-    issue_number: pr.number
+async function poll() {
+  const octokit = new Octokit({
+    auth: config.token
   });
 
-  const existingComment = comments.data.find(comment =>
-    comment.body.includes(STATUS_COMMENT_MARKER)
-  );
+  const startTime = Date.now();
+  const timeoutMs = config.timeoutMinutes * 60 * 1000;
 
-  if (existingComment) {
-    await octokit.rest.issues.updateComment({
-      ...context.repo,
-      comment_id: existingComment.id,
-      body: statusMessage
-    });
-  } else {
-    await octokit.rest.issues.createComment({
-      ...context.repo,
-      issue_number: pr.number,
-      body: statusMessage
-    });
-  }
-
-  return status.allPassed;
-}
-
-async function notifySuccess(octokit, context, pr, notificationTemplate) {
-  const comments = await octokit.rest.issues.listComments({
-    ...context.repo,
-    issue_number: pr.number
-  });
-
-  const hasNotification = comments.data.some(comment =>
-    comment.body.includes('All checks have passed!') && !comment.body.includes(STATUS_COMMENT_MARKER)
-  );
-
-  if (!hasNotification) {
-    console.log('Creating success notification comment...');
-    const message = notificationTemplate.replace('{user}', pr.user.login);
-    await octokit.rest.issues.createComment({
-      ...context.repo,
-      issue_number: pr.number,
-      body: message
-    });
-    console.log('Success notification created');
-  }
-}
-
-async function run() {
-  try {
-    console.log('\n::notice::Starting PR status check...');
-
-    // Get inputs
-    const token = core.getInput('github-token', { required: true });
-    const excludedChecks = core.getInput('excluded-checks').split(',').map(s => s.trim());
-    const notificationTemplate = core.getInput('notification-message');
-
-    const octokit = github.getOctokit(token);
-    const context = github.context;
-
-    // Get event context
-    let sha, prNumber;
-
-    console.log('Event type:', context.eventName);
-
-    if (context.eventName === 'pull_request') {
-      sha = context.payload.pull_request.head.sha;
-      prNumber = context.payload.pull_request.number;
-      console.log('PR event detected:', { sha, prNumber });
-    } else if (context.eventName === 'status') {
-      sha = context.payload.sha;
-      console.log('Status event detected:', { sha });
-    } else if (context.eventName === 'workflow_dispatch') {
-      sha = context.sha;
-      console.log('Workflow dispatch event detected:', { sha });
-    } else {
-      console.log('Unsupported event type:', context.eventName);
-      console.log('Available context:', {
-        sha: context.sha,
-        ref: context.ref,
-        eventName: context.eventName
-      });
-      sha = context.sha;
+  while (true) {
+    const elapsedMs = Date.now() - startTime;
+    if (elapsedMs > timeoutMs) {
+      console.log('\n::error::⌛ Timed out waiting for checks');
+      process.exit(1);
     }
 
-    if (!sha) {
-      throw new Error('Could not determine SHA');
-    }
+    console.log(`\n::notice::Checking status (${Math.floor(elapsedMs / 1000)}s elapsed)...`);
 
-    // Get PR details
-    let pr;
-    if (prNumber) {
-      console.log('Fetching PR by number:', prNumber);
-      const { data: prData } = await octokit.rest.pulls.get({
-        ...context.repo,
-        pull_number: prNumber
-      });
-      pr = prData;
-    } else {
-      console.log('Searching for PR by SHA:', sha);
-      const { data: prs } = await octokit.rest.pulls.list({
-        ...context.repo,
-        state: 'open',
-        sort: 'updated',
-        direction: 'desc'
-      });
+    try {
+      const status = await checkStatus(octokit);
 
-      pr = prs.find(p => p.head.sha === sha);
-      if (!pr) {
-        console.log(`No PR found for SHA: ${sha}`);
-        return;
+      if (status.allCompleted) {
+        if (status.allPassed) {
+          console.log('\n::notice::✅ All checks passed! Creating notification...');
+
+          // Get PR details for notification
+          const { data: pr } = await octokit.pulls.get({
+            owner: context.owner,
+            repo: context.repo,
+            pull_number: context.prNumber
+          });
+
+          // Create success notification
+          const message = config.notificationMessage.replace('{user}', pr.user.login);
+          await octokit.issues.createComment({
+            owner: context.owner,
+            repo: context.repo,
+            issue_number: context.prNumber,
+            body: message
+          });
+
+          process.exit(0);
+        } else {
+          console.log('\n::error::❌ Some checks failed:');
+          status.failed.forEach(check => {
+            console.log(`  - ${check}`);
+          });
+          process.exit(1);
+        }
+      } else {
+        console.log('\n::notice::⏳ Waiting for checks to complete:');
+        status.pending.forEach(check => {
+          console.log(`  - ${check}`);
+        });
       }
+    } catch (error) {
+      console.log('\n::error::Error checking status:', error);
+      process.exit(1);
     }
 
-    console.log(`\n::notice::Found PR #${pr.number}: ${pr.title}`);
-
-    // Get current status
-    const status = await getCurrentStatus(octokit, context, sha, excludedChecks);
-
-    // Update status comment
-    const isComplete = await updateStatusComment(octokit, context, pr, status);
-
-    // If everything passed, create success notification
-    if (isComplete) {
-      await notifySuccess(octokit, context, pr, notificationTemplate);
-    }
-
-  } catch (error) {
-    console.log('\n::error::Error in workflow:', error);
-    core.setFailed(error.message);
+    await new Promise(resolve => setTimeout(resolve, config.pollInterval));
   }
 }
 
-run();
+// Validate required configuration
+if (!config.token) {
+  console.log('\n::error::Missing GITHUB_TOKEN');
+  process.exit(1);
+}
+
+poll().catch(error => {
+  console.log('\n::error::Unhandled error:', error);
+  process.exit(1);
+});
