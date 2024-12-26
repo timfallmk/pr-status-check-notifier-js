@@ -9,12 +9,37 @@ function createNotificationId(prNumber, message) {
   return `pr-${prNumber}-${message}`;
 }
 
+async function hasExistingComment(octokit, context, prNumber, message) {
+  try {
+    const { data: comments } = await octokit.rest.issues.listComments({
+      ...context.repo,
+      issue_number: prNumber,
+      per_page: 100
+    });
+
+    const normalizedMessage = message.toLowerCase().trim();
+    return comments.some(comment => 
+      comment.body.toLowerCase().trim() === normalizedMessage
+    );
+  } catch (error) {
+    core.warning(`Failed to check existing comments: ${error.message}`);
+    return false;
+  }
+}
+
 async function createComment(octokit, context, prNumber, body) {
   const notificationId = createNotificationId(prNumber, body);
   
-  // Check if already sent
+  // Check if already sent this session
   if (sentNotifications.has(notificationId)) {
-    core.info('Skipping duplicate notification');
+    core.info('Skipping duplicate notification (same session)');
+    return;
+  }
+
+  // Check previous comments
+  const processedBody = processNotificationBody(body);
+  if (await hasExistingComment(octokit, context, prNumber, processedBody)) {
+    core.info('Skipping duplicate notification (found in PR history)');
     return;
   }
 
@@ -22,10 +47,9 @@ async function createComment(octokit, context, prNumber, body) {
     await octokit.rest.issues.createComment({
       ...context.repo,
       issue_number: prNumber,
-      body: processNotificationBody(body)
+      body: processedBody
     });
     
-    // Track successful notification
     sentNotifications.add(notificationId);
   } catch (error) {
     core.error(`Failed to create comment: ${error.message}`);
