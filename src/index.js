@@ -16,38 +16,43 @@ async function checkStatus(octokit, context) {
     sha = context.payload.pull_request.head.sha;
   }
   
-  core.info('Starting check status...');
-  core.info(`Repository: ${context.repo.owner}/${context.repo.repo}`);
-  core.info(`Getting status and checks for SHA: ${sha}`);
-  core.info(`Excluded checks: ${excludedChecks.join(', ')}`);
-
+  core.info('--------------------');
+  core.info(`Checking status for ${context.repo.owner}/${context.repo.repo}@${sha}`);
+  
   try {
-    // Log API response details
-    core.info('Fetching status checks...');
+    // Fetch status checks
     const statusData = await octokit.rest.repos.getCombinedStatusForRef({
       ...context.repo,
       ref: sha
     });
-    core.info(`Status API Response: ${JSON.stringify(statusData.data, null, 2)}`);
 
-    core.info('Fetching check runs...');
+    // Fetch check runs
     const checksData = await octokit.rest.checks.listForRef({
       ...context.repo,
       ref: sha
     });
-    core.info(`Checks API Response: ${JSON.stringify(checksData.data, null, 2)}`);
 
-    // Rest of the code remains the same
-    core.info(`Found ${statusData.data.statuses.length} status checks and ${checksData.data.check_runs.length} check runs`);
+    // Log summary counts
+    core.info(`Found ${statusData.data.statuses.length} status check(s) and ${checksData.data.check_runs.length} check run(s)`);
+    
+    if (excludedChecks.length > 0) {
+      core.info(`Excluding: ${excludedChecks.join(', ')}`);
+    }
 
-    // Log all found checks before filtering
-    statusData.data.statuses.forEach(status => {
-      core.info(`Status check found: ${status.context} (${status.state})`);
-    });
+    // Log active checks
+    if (statusData.data.statuses.length > 0) {
+      core.info('Status Checks:');
+      statusData.data.statuses.forEach(status => {
+        core.info(`  • ${status.context}: ${status.state}`);
+      });
+    }
 
-    checksData.data.check_runs.forEach(check => {
-      core.info(`Check run found: ${check.name} (${check.status}/${check.conclusion})`);
-    });
+    if (checksData.data.check_runs.length > 0) {
+      core.info('Check Runs:');
+      checksData.data.check_runs.forEach(check => {
+        core.info(`  • ${check.name}: ${check.status}/${check.conclusion}`);
+      });
+    }
 
     // Combine and filter checks
     const relevantChecks = [
