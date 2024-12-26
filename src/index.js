@@ -72,7 +72,7 @@ async function checkStatus(octokit) {
   });
 
   return {
-    allCompleted: pendingChecks.length === 0,
+    allCompleted: pendingChecks.length === 0 && (failedChecks.length > 0 || passedChecks.length > 0),
     allPassed: pendingChecks.length === 0 && failedChecks.length === 0 && passedChecks.length > 0,
     pending: pendingChecks,
     failed: failedChecks,
@@ -88,6 +88,7 @@ async function poll() {
 
   const startTime = Date.now();
   const timeoutMs = config.timeoutMinutes * 60 * 1000;
+  let hasNotified = false;
 
   while (true) {
     const elapsedMs = Date.now() - startTime;
@@ -102,7 +103,7 @@ async function poll() {
       const status = await checkStatus(octokit);
 
       if (status.allCompleted) {
-        if (status.allPassed) {
+        if (status.allPassed && !hasNotified) {
           console.log('\n::notice::✅ All checks passed! Creating notification...');
 
           // Get PR details for notification
@@ -121,8 +122,9 @@ async function poll() {
             body: message
           });
 
+          hasNotified = true;
           process.exit(0);
-        } else {
+        } else if (status.failed.length > 0) {
           console.log('\n::error::❌ Some checks failed:');
           status.failed.forEach(check => {
             console.log(`  - ${check}`);
@@ -130,16 +132,20 @@ async function poll() {
           process.exit(1);
         }
       } else {
-        console.log('\n::notice::⏳ Waiting for checks to complete:');
-        status.pending.forEach(check => {
-          console.log(`  - ${check}`);
-        });
+        if (status.pending.length > 0) {
+          console.log('\n::notice::⏳ Waiting for checks to complete:');
+          status.pending.forEach(check => {
+            console.log(`  - ${check}`);
+          });
+        }
       }
     } catch (error) {
       console.log('\n::error::Error checking status:', error);
-      process.exit(1);
+      // Don't exit on error, keep polling
+      console.log('Will retry in next poll...');
     }
 
+    // Always sleep before next poll
     await new Promise(resolve => setTimeout(resolve, config.pollInterval));
   }
 }
