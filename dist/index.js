@@ -34450,22 +34450,35 @@ const { Octokit } = __nccwpck_require__(5772);
 const core = __nccwpck_require__(7484);
 const github = __nccwpck_require__(3228);
 
-// Add at the top with other constants
+// Track notifications at file scope
 const sentNotifications = new Set();
 
-// Add helper function
-function createNotificationId(check) {
-  return `${check.name}-${check.status}-${check.conclusion || ''}-${check.started_at || ''}-${check.completed_at || ''}`;
+function createNotificationId(prNumber, message) {
+  return `pr-${prNumber}-${message}`;
 }
 
-function isNotificationDuplicate(check) {
-  const notificationId = createNotificationId(check);
+async function createComment(octokit, context, prNumber, body) {
+  const notificationId = createNotificationId(prNumber, body);
+  
+  // Check if already sent
   if (sentNotifications.has(notificationId)) {
-    core.debug(`Skipping duplicate notification for ${check.name}`);
-    return true;
+    core.info('Skipping duplicate notification');
+    return;
   }
-  sentNotifications.add(notificationId);
-  return false;
+
+  try {
+    await octokit.rest.issues.createComment({
+      ...context.repo,
+      issue_number: prNumber,
+      body: processNotificationBody(body)
+    });
+    
+    // Track successful notification
+    sentNotifications.add(notificationId);
+  } catch (error) {
+    core.error(`Failed to create comment: ${error.message}`);
+    throw error;
+  }
 }
 
 // Get inputs with core helpers
@@ -34714,14 +34727,6 @@ function processNotificationBody(body) {
     )
     // Unescape other characters
     .replace(/\\(.)/g, '$1');
-}
-
-async function createComment(octokit, context, prNumber, body) {
-  await octokit.rest.issues.createComment({
-    ...context.repo,
-    issue_number: prNumber,
-    body: processNotificationBody(body)
-  });
 }
 module.exports = __webpack_exports__;
 /******/ })()
