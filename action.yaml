@@ -33,14 +33,12 @@ runs:
     
     - name: Install dependencies
       shell: bash
-      working-directory: ${{ github.action_path }}
       run: |
-        npm init -y
-        npm install @octokit/rest
+        npm install
     
     - name: Run status checker
       shell: bash
-      run: node ${{ github.action_path }}/poll-checks.js
+      run: node src/index.js
       env:
         GITHUB_TOKEN: ${{ inputs.github-token }}
         EXCLUDED_CHECKS: ${{ inputs.excluded-checks }}
