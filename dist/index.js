@@ -34700,12 +34700,6 @@ async function run() {
   }
 }
 
-// Clean up old notifications periodically (optional)
-setInterval(() => {
-  const oneHourAgo = Date.now() - (60 * 60 * 1000);
-  sentNotifications.clear();
-}, 60 * 60 * 1000); // Clean every hour
-
 run();
 
 function processNotificationBody(body) {
