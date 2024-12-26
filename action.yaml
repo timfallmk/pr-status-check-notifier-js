@@ -1,6 +1,6 @@
-name: 'PR Check Status Notifier JS'
+name: 'PR Check Status Notifier'
 description: 'Monitors PR checks and notifies when all checks (except specified ones) have passed'
-author: 'Tim Fall'
+author: 'Your Name'
 
 inputs:
   github-token:
@@ -25,23 +25,9 @@ inputs:
     default: '30'
 
 runs:
-  using: 'composite'
-  steps:
-    - uses: actions/setup-node@v4
-      with:
-        node-version: '20'
-    
-    - name: Install dependencies
-      shell: bash
-      run: |
-        npm install
-    
-    - name: Run status checker
-      shell: bash
-      run: node src/index.js
-      env:
-        GITHUB_TOKEN: ${{ inputs.github-token }}
-        EXCLUDED_CHECKS: ${{ inputs.excluded-checks }}
-        POLL_INTERVAL: ${{ inputs.poll-interval }}
-        TIMEOUT_MINUTES: ${{ inputs.timeout }}
-        NOTIFICATION_MESSAGE: ${{ inputs.notification-message }}
+  using: 'node20'
+  main: 'dist/index.js'
+
+branding:
+  icon: 'check-circle'
+  color: 'green'
