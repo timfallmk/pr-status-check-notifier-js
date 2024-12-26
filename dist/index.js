@@ -4082,6 +4082,22 @@ function wrappy (fn, cb) {
 }
 
 
+/***/ }),
+
+/***/ 746:
+/***/ ((module) => {
+
+module.exports = eval("require")("@actions/core");
+
+
+/***/ }),
+
+/***/ 670:
+/***/ ((module) => {
+
+module.exports = eval("require")("@actions/github");
+
+
 /***/ })
 
 /******/ 	});
@@ -4124,37 +4140,23 @@ function wrappy (fn, cb) {
 /************************************************************************/
 var __webpack_exports__ = {};
 const { Octokit } = __nccwpck_require__(772);
+const core = __nccwpck_require__(746);
+const github = __nccwpck_require__(670);
 
-// Get configuration from environment variables with defaults
-const config = {
-  token: process.env.GITHUB_TOKEN,
-  excludedChecks: (process.env.EXCLUDED_CHECKS || '').split(',').filter(Boolean),
-  pollInterval: parseInt(process.env.POLL_INTERVAL || '30', 10) * 1000, // Convert to milliseconds
-  timeoutMinutes: parseInt(process.env.TIMEOUT_MINUTES || '30', 10),
-  notificationMessage: process.env.NOTIFICATION_MESSAGE
-};
+// Get inputs with core helpers
+const token = core.getInput('github-token', { required: true });
+const excludedChecks = core.getInput('excluded-checks').split(',').filter(Boolean);
+const pollInterval = parseInt(core.getInput('poll-interval') || '30', 10) * 1000;
+const timeoutMinutes = parseInt(core.getInput('timeout') || '30', 10);
 
-// GitHub context is available in Actions environment
-const context = {
-  owner: process.env.GITHUB_REPOSITORY.split('/')[0],
-  repo: process.env.GITHUB_REPOSITORY.split('/')[1],
-  sha: process.env.GITHUB_SHA,
-  eventName: process.env.GITHUB_EVENT_NAME,
-  prNumber: process.env.GITHUB_EVENT_NAME === 'pull_request'
-    ? process.env.GITHUB_EVENT_NUMBER
-    : null
-};
-
-async function checkStatus(octokit) {
+async function checkStatus(octokit, context) {
   const [statusData, checksData] = await Promise.all([
-    octokit.repos.getCombinedStatusForRef({
-      owner: context.owner,
-      repo: context.repo,
+    octokit.rest.repos.getCombinedStatusForRef({
+      ...context.repo,
       ref: context.sha
     }),
-    octokit.checks.listForRef({
-      owner: context.owner,
-      repo: context.repo,
+    octokit.rest.checks.listForRef({
+      ...context.repo,
       ref: context.sha
     })
   ]);
@@ -4165,7 +4167,7 @@ async function checkStatus(octokit) {
     ...checksData.data.check_runs
   ].filter(check => {
     const checkName = check.name || check.context;
-    return !config.excludedChecks.some(excluded =>
+    return !excludedChecks.some(excluded =>
       checkName?.toLowerCase().includes(excluded.toLowerCase())
     );
   });
@@ -4183,24 +4185,11 @@ async function checkStatus(octokit) {
     const status = isCheckRun ? check.status : 'completed';
     const conclusion = isCheckRun ? check.conclusion : check.state;
 
-    // A check is pending if:
-    // - It's in progress
-    // - It's queued
-    // - It's not completed
-    // - It has no conclusion yet
     const isPending = status === 'in_progress' ||
       status === 'queued' ||
       status !== 'completed' ||
       conclusion === null;
-
-    // A check is passed if:
-    // - It's completed AND
-    // - Has a successful conclusion
     const isPassed = !isPending && status === 'completed' && successfulConclusions.includes(conclusion);
-
-    // A check is failed if:
-    // - It's not pending AND
-    // - It's not passed
     const isFailed = !isPending && !isPassed;
 
     console.log(`Check "${name}":
@@ -4224,80 +4213,88 @@ async function checkStatus(octokit) {
   };
 }
 
-async function poll() {
-  const octokit = new Octokit({
-    auth: config.token
-  });
+async function run() {
+  try {
+    const octokit = github.getOctokit(token);
+    const context = github.context;
 
-  const startTime = Date.now();
-  const timeoutMs = config.timeoutMinutes * 60 * 1000;
-  let hasNotified = false;
+    let prNumber;
 
-  while (true) {
-    const elapsedMs = Date.now() - startTime;
-    if (elapsedMs > timeoutMs) {
-      console.log('\n::error::⌛ Timed out waiting for checks');
-      process.exit(1);
-    }
+    if (context.eventName === 'pull_request') {
+      prNumber = context.payload.pull_request.number;
+      core.info(`Found PR number from pull_request event: ${prNumber}`);
+    } else {
+      // Try to find PR from current SHA
+      const { data: prs } = await octokit.rest.pulls.list({
+        ...context.repo,
+        state: 'open',
+        head: context.sha
+      });
 
-    const elapsedMinutes = Math.floor(elapsedMs / 60000);
-    const elapsedSeconds = Math.floor((elapsedMs % 60000) / 1000);
-    console.log(`\n::notice::Checking status (${elapsedMinutes}m ${elapsedSeconds}s elapsed)...`);
-
-    try {
-      const status = await checkStatus(octokit);
-
-      if (!status.hasChecks) {
-        console.log('No checks found yet, waiting...');
-      } else if (status.allCompleted) {
-        if (status.allPassed && !hasNotified) {
-          console.log('\n::notice::✅ All checks passed! Creating notification...');
-
-          // Get PR details for notification
-          const { data: pr } = await octokit.pulls.get({
-            owner: context.owner,
-            repo: context.repo,
-            pull_number: context.prNumber
-          });
-
-          // Create success notification
-          const message = config.notificationMessage.replace('{user}', pr.user.login);
-          await octokit.issues.createComment({
-            owner: context.owner,
-            repo: context.repo,
-            issue_number: context.prNumber,
-            body: message
-          });
-
-          hasNotified = true;
-          process.exit(0);
-        } else if (status.failed.length > 0) {
-          console.log('\n::error::❌ The following checks failed:');
-          status.failed.forEach(check => console.log(`  - ${check}`));
-          process.exit(1);
-        }
-      } else {
-        console.log('\n::notice::⏳ Waiting for the following checks:');
-        status.pending.forEach(check => console.log(`  - ${check}`));
+      if (prs.length === 0) {
+        core.setFailed('No matching PR found');
+        return;
       }
-    } catch (error) {
-      console.log('\n::warning::Error checking status (will retry):', error);
+      prNumber = prs[0].number;
+      core.info(`Found PR number from SHA lookup: ${prNumber}`);
     }
 
-    await new Promise(resolve => setTimeout(resolve, config.pollInterval));
+    const startTime = Date.now();
+    const timeoutMs = timeoutMinutes * 60 * 1000;
+    let hasNotified = false;
+
+    while (true) {
+      const elapsedMs = Date.now() - startTime;
+      if (elapsedMs > timeoutMs) {
+        core.setFailed(`Timed out after ${timeoutMinutes} minutes`);
+        return;
+      }
+
+      const elapsedMinutes = Math.floor(elapsedMs / 60000);
+      const elapsedSeconds = Math.floor((elapsedMs % 60000) / 1000);
+      core.info(`Checking status (${elapsedMinutes}m ${elapsedSeconds}s elapsed)...`);
+
+      try {
+        const status = await checkStatus(octokit, context);
+
+        if (!status.hasChecks) {
+          core.info('No checks found yet, waiting...');
+        } else if (status.allCompleted) {
+          if (status.allPassed && !hasNotified) {
+            core.info('All checks passed! Creating notification...');
+
+            // Create success notification
+            const message = core.getInput('notification-message').replace('{user}', context.actor);
+            await octokit.rest.issues.createComment({
+              ...context.repo,
+              issue_number: prNumber,
+              body: message
+            });
+
+            hasNotified = true;
+            return;
+          } else if (status.failed.length > 0) {
+            core.error('The following checks failed:');
+            status.failed.forEach(check => core.error(`  - ${check}`));
+            core.setFailed('Some checks failed');
+            return;
+          }
+        } else {
+          core.info('Waiting for the following checks:');
+          status.pending.forEach(check => core.info(`  - ${check}`));
+        }
+      } catch (error) {
+        core.warning(`Error checking status (will retry): ${error.message}`);
+      }
+
+      await new Promise(resolve => setTimeout(resolve, pollInterval));
+    }
+  } catch (error) {
+    core.setFailed(error.message);
   }
 }
 
-// Validate required configuration
-if (!config.token) {
-  console.log('\n::error::Missing GITHUB_TOKEN');
-  process.exit(1);
-}
-
-poll().catch(error => {
-  console.log('\n::error::Unhandled error:', error);
-  process.exit(1);
-});
+run();
 module.exports = __webpack_exports__;
 /******/ })()
 ;
