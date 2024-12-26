@@ -58,7 +58,7 @@ async function checkStatus(octokit) {
     const conclusion = isCheckRun ? check.conclusion : check.state;
 
     const isPassed = status === 'completed' && successfulConclusions.includes(conclusion);
-    const isPending = status !== 'completed' || conclusion === null;
+    const isPending = status === 'in_progress' || status !== 'completed' || conclusion === null;
 
     if (isPending) {
       pendingChecks.push(name);
@@ -68,7 +68,10 @@ async function checkStatus(octokit) {
       failedChecks.push(name);
     }
 
-    console.log(`Check "${name}": ${status}/${conclusion} (${isPassed ? '✅' : isPending ? '⏳' : '❌'})`);
+    console.log(`Check "${name}": status=${status}, conclusion=${conclusion} (${isPassed ? '✅' : isPending ? '⏳' : '❌'})`);
+    if (isPending) {
+      console.log(`  - Pending because: ${status === 'in_progress' ? 'in_progress' : status !== 'completed' ? 'not completed' : 'no conclusion'}`);
+    }
   });
 
   return {
