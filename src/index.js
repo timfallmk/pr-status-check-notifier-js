@@ -21,7 +21,6 @@ const context = {
 };
 
 async function checkStatus(octokit) {
-  // Get both status checks and check runs
   const [statusData, checksData] = await Promise.all([
     octokit.repos.getCombinedStatusForRef({
       owner: context.owner,
@@ -46,10 +45,12 @@ async function checkStatus(octokit) {
     );
   });
 
+  console.log(`Found ${relevantChecks.length} relevant checks`);
+
   const successfulConclusions = ['success', 'skipped', 'neutral'];
-  let pendingChecks = [];
-  let failedChecks = [];
-  let passedChecks = [];
+  const pendingChecks = [];
+  const failedChecks = [];
+  const passedChecks = [];
 
   relevantChecks.forEach(check => {
     const isCheckRun = 'conclusion' in check;
@@ -57,30 +58,44 @@ async function checkStatus(octokit) {
     const status = isCheckRun ? check.status : 'completed';
     const conclusion = isCheckRun ? check.conclusion : check.state;
 
-    const isPassed = status === 'completed' && successfulConclusions.includes(conclusion);
-    const isPending = status === 'in_progress' || status !== 'completed' || conclusion === null;
+    // A check is pending if:
+    // - It's in progress
+    // - It's queued
+    // - It's not completed
+    // - It has no conclusion yet
+    const isPending = status === 'in_progress' ||
+      status === 'queued' ||
+      status !== 'completed' ||
+      conclusion === null;
 
-    if (isPending) {
-      pendingChecks.push(name);
-    } else if (isPassed) {
-      passedChecks.push(name);
-    } else {
-      failedChecks.push(name);
-    }
+    // A check is passed if:
+    // - It's completed AND
+    // - Has a successful conclusion
+    const isPassed = !isPending && status === 'completed' && successfulConclusions.includes(conclusion);
 
-    console.log(`Check "${name}": status=${status}, conclusion=${conclusion} (${isPassed ? '✅' : isPending ? '⏳' : '❌'})`);
-    if (isPending) {
-      console.log(`  - Pending because: ${status === 'in_progress' ? 'in_progress' : status !== 'completed' ? 'not completed' : 'no conclusion'}`);
-    }
+    // A check is failed if:
+    // - It's not pending AND
+    // - It's not passed
+    const isFailed = !isPending && !isPassed;
+
+    console.log(`Check "${name}":
+  Status: ${status}
+  Conclusion: ${conclusion}
+  State: ${isPending ? '⏳ Pending' : isPassed ? '✅ Passed' : '❌ Failed'}
+  Reason: ${isPending ? 'Still running' : isPassed ? 'Completed successfully' : 'Completed with failure'}`);
+
+    if (isPending) pendingChecks.push(name);
+    else if (isPassed) passedChecks.push(name);
+    else failedChecks.push(name);
   });
 
   return {
-    allCompleted: pendingChecks.length === 0 && (failedChecks.length > 0 || passedChecks.length > 0),
+    hasChecks: relevantChecks.length > 0,
+    allCompleted: pendingChecks.length === 0,
     allPassed: pendingChecks.length === 0 && failedChecks.length === 0 && passedChecks.length > 0,
     pending: pendingChecks,
     failed: failedChecks,
-    passed: passedChecks,
-    total: relevantChecks.length
+    passed: passedChecks
   };
 }
 
@@ -100,12 +115,16 @@ async function poll() {
       process.exit(1);
     }
 
-    console.log(`\n::notice::Checking status (${Math.floor(elapsedMs / 1000)}s elapsed)...`);
+    const elapsedMinutes = Math.floor(elapsedMs / 60000);
+    const elapsedSeconds = Math.floor((elapsedMs % 60000) / 1000);
+    console.log(`\n::notice::Checking status (${elapsedMinutes}m ${elapsedSeconds}s elapsed)...`);
 
     try {
       const status = await checkStatus(octokit);
 
-      if (status.allCompleted) {
+      if (!status.hasChecks) {
+        console.log('No checks found yet, waiting...');
+      } else if (status.allCompleted) {
         if (status.allPassed && !hasNotified) {
           console.log('\n::notice::✅ All checks passed! Creating notification...');
 
@@ -128,27 +147,18 @@ async function poll() {
           hasNotified = true;
           process.exit(0);
         } else if (status.failed.length > 0) {
-          console.log('\n::error::❌ Some checks failed:');
-          status.failed.forEach(check => {
-            console.log(`  - ${check}`);
-          });
+          console.log('\n::error::❌ The following checks failed:');
+          status.failed.forEach(check => console.log(`  - ${check}`));
           process.exit(1);
         }
       } else {
-        if (status.pending.length > 0) {
-          console.log('\n::notice::⏳ Waiting for checks to complete:');
-          status.pending.forEach(check => {
-            console.log(`  - ${check}`);
-          });
-        }
+        console.log('\n::notice::⏳ Waiting for the following checks:');
+        status.pending.forEach(check => console.log(`  - ${check}`));
       }
     } catch (error) {
-      console.log('\n::error::Error checking status:', error);
-      // Don't exit on error, keep polling
-      console.log('Will retry in next poll...');
+      console.log('\n::warning::Error checking status (will retry):', error);
     }
 
-    // Always sleep before next poll
     await new Promise(resolve => setTimeout(resolve, config.pollInterval));
   }
 }
