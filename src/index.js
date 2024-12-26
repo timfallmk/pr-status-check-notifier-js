@@ -9,85 +9,97 @@ const pollInterval = parseInt(core.getInput('poll-interval') || '30', 10) * 1000
 const timeoutMinutes = parseInt(core.getInput('timeout') || '30', 10);
 
 async function checkStatus(octokit, context) {
+  core.info('Starting check status...');
+  core.info(`Repository: ${context.repo.owner}/${context.repo.repo}`);
   core.info(`Getting status and checks for SHA: ${context.sha}`);
   core.info(`Excluded checks: ${excludedChecks.join(', ')}`);
 
-  const [statusData, checksData] = await Promise.all([
-    octokit.rest.repos.getCombinedStatusForRef({
+  try {
+    // Log API response details
+    core.info('Fetching status checks...');
+    const statusData = await octokit.rest.repos.getCombinedStatusForRef({
       ...context.repo,
       ref: context.sha
-    }),
-    octokit.rest.checks.listForRef({
+    });
+    core.info(`Status API Response: ${JSON.stringify(statusData.data, null, 2)}`);
+
+    core.info('Fetching check runs...');
+    const checksData = await octokit.rest.checks.listForRef({
       ...context.repo,
       ref: context.sha
-    })
-  ]);
+    });
+    core.info(`Checks API Response: ${JSON.stringify(checksData.data, null, 2)}`);
 
-  core.info(`Found ${statusData.data.statuses.length} status checks and ${checksData.data.check_runs.length} check runs`);
+    // Rest of the code remains the same
+    core.info(`Found ${statusData.data.statuses.length} status checks and ${checksData.data.check_runs.length} check runs`);
 
-  // Log all found checks before filtering
-  statusData.data.statuses.forEach(status => {
-    core.info(`Status check found: ${status.context} (${status.state})`);
-  });
+    // Log all found checks before filtering
+    statusData.data.statuses.forEach(status => {
+      core.info(`Status check found: ${status.context} (${status.state})`);
+    });
 
-  checksData.data.check_runs.forEach(check => {
-    core.info(`Check run found: ${check.name} (${check.status}/${check.conclusion})`);
-  });
+    checksData.data.check_runs.forEach(check => {
+      core.info(`Check run found: ${check.name} (${check.status}/${check.conclusion})`);
+    });
 
-  // Combine and filter checks
-  const relevantChecks = [
-    ...statusData.data.statuses,
-    ...checksData.data.check_runs
-  ].filter(check => {
-    const checkName = check.name || check.context;
-    const isExcluded = excludedChecks.some(excluded =>
-      checkName?.toLowerCase().includes(excluded.toLowerCase())
-    );
-    if (isExcluded) {
-      core.info(`Excluding check: ${checkName}`);
-    }
-    return !isExcluded;
-  });
+    // Combine and filter checks
+    const relevantChecks = [
+      ...statusData.data.statuses,
+      ...checksData.data.check_runs
+    ].filter(check => {
+      const checkName = check.name || check.context;
+      const isExcluded = excludedChecks.some(excluded =>
+        checkName?.toLowerCase().includes(excluded.toLowerCase())
+      );
+      if (isExcluded) {
+        core.info(`Excluding check: ${checkName}`);
+      }
+      return !isExcluded;
+    });
 
-  core.info(`Found ${relevantChecks.length} relevant checks after filtering`);
+    core.info(`Found ${relevantChecks.length} relevant checks after filtering`);
 
-  const successfulConclusions = ['success', 'skipped', 'neutral'];
-  const pendingChecks = [];
-  const failedChecks = [];
-  const passedChecks = [];
+    const successfulConclusions = ['success', 'skipped', 'neutral'];
+    const pendingChecks = [];
+    const failedChecks = [];
+    const passedChecks = [];
 
-  relevantChecks.forEach(check => {
-    const isCheckRun = 'conclusion' in check;
-    const name = check.name || check.context;
-    const status = isCheckRun ? check.status : 'completed';
-    const conclusion = isCheckRun ? check.conclusion : check.state;
+    relevantChecks.forEach(check => {
+      const isCheckRun = 'conclusion' in check;
+      const name = check.name || check.context;
+      const status = isCheckRun ? check.status : 'completed';
+      const conclusion = isCheckRun ? check.conclusion : check.state;
 
-    const isPending = status === 'in_progress' ||
-      status === 'queued' ||
-      status !== 'completed' ||
-      conclusion === null;
-    const isPassed = !isPending && status === 'completed' && successfulConclusions.includes(conclusion);
-    const isFailed = !isPending && !isPassed;
+      const isPending = status === 'in_progress' ||
+        status === 'queued' ||
+        status !== 'completed' ||
+        conclusion === null;
+      const isPassed = !isPending && status === 'completed' && successfulConclusions.includes(conclusion);
+      const isFailed = !isPending && !isPassed;
 
-    console.log(`Check "${name}":
+      console.log(`Check "${name}":
   Status: ${status}
   Conclusion: ${conclusion}
   State: ${isPending ? '⏳ Pending' : isPassed ? '✅ Passed' : '❌ Failed'}
   Reason: ${isPending ? 'Still running' : isPassed ? 'Completed successfully' : 'Completed with failure'}`);
 
-    if (isPending) pendingChecks.push(name);
-    else if (isPassed) passedChecks.push(name);
-    else failedChecks.push(name);
-  });
+      if (isPending) pendingChecks.push(name);
+      else if (isPassed) passedChecks.push(name);
+      else failedChecks.push(name);
+    });
 
-  return {
-    hasChecks: relevantChecks.length > 0,
-    allCompleted: pendingChecks.length === 0,
-    allPassed: pendingChecks.length === 0 && failedChecks.length === 0 && passedChecks.length > 0,
-    pending: pendingChecks,
-    failed: failedChecks,
-    passed: passedChecks
-  };
+    return {
+      hasChecks: relevantChecks.length > 0,
+      allCompleted: pendingChecks.length === 0,
+      allPassed: pendingChecks.length === 0 && failedChecks.length === 0 && passedChecks.length > 0,
+      pending: pendingChecks,
+      failed: failedChecks,
+      passed: passedChecks
+    };
+  } catch (error) {
+    core.warning(`Error fetching status or checks: ${error.message}`);
+    throw error;
+  }
 }
 
 async function run() {
