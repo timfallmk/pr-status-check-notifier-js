@@ -10,7 +10,7 @@ inputs:
   excluded-checks:
     description: 'Comma-separated list of check names to exclude'
     required: false
-    default: 'atlantis/apply,Check Status & Notify'
+    default: 'notify-check'
   notification-message:
     description: 'Custom notification message (use {user} for PR owner mention)'
     required: false
