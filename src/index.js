@@ -27,7 +27,28 @@ async function hasExistingComment(octokit, context, prNumber, message) {
   }
 }
 
+async function isPRMergeable(octokit, context, prNumber) {
+  try {
+    const { data: pr } = await octokit.rest.pulls.get({
+      ...context.repo,
+      pull_number: prNumber
+    });
+    
+    core.info(`PR mergeable state: ${pr.mergeable_state}`);
+    return pr.mergeable === true;
+  } catch (error) {
+    core.warning(`Failed to check PR mergeable status: ${error.message}`);
+    return false;
+  }
+}
+
 async function createComment(octokit, context, prNumber, body) {
+  // Check mergeable status first
+  if (!await isPRMergeable(octokit, context, prNumber)) {
+    core.info('Skipping notification - PR is not mergeable');
+    return;
+  }
+
   const notificationId = createNotificationId(prNumber, body);
   
   // Check if already sent this session
