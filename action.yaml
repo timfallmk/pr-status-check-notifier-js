@@ -14,7 +14,7 @@ inputs:
   notification-message:
     description: 'Custom notification message (use {user} for PR owner mention)'
     required: false
-    default: '@{user} All checks have passed! ✅\nThis PR is ready for `atlantis apply` and merge.\n\n*Note*: The `atlantis apply` status check will show as passed after running the command.'
+    default: '@{user} All checks have passed! ✅\nThis PR is ready!'
   poll-interval:
     description: 'Polling interval in seconds'
     required: false
