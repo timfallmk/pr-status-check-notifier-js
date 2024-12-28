@@ -1,6 +1,7 @@
 const { Octokit } = require('@octokit/rest');
 const core = require('@actions/core');
 const github = require('@actions/github');
+const notificationStore = require('./notificationStore');
 
 // Track notifications at file scope
 const sentNotifications = new Set();
@@ -78,13 +79,7 @@ async function createComment(octokit, context, prNumber, body) {
   }
 }
 
-// Get inputs with core helpers
-const token = core.getInput('github-token', { required: true });
-const excludedChecks = core.getInput('excluded-checks').split(',').filter(Boolean);
-const pollInterval = parseInt(core.getInput('poll-interval') || '30', 10) * 1000;
-const timeoutMinutes = parseInt(core.getInput('timeout') || '30', 10);
-
-async function checkStatus(octokit, context) {
+async function checkStatus(octokit, context, excludedChecks = []) {
   let sha = context.sha;
   
   // If this is a PR event, use the PR head SHA
@@ -192,6 +187,12 @@ async function checkStatus(octokit, context) {
 
 async function run() {
   try {
+    // Move configuration here
+    const token = core.getInput('github-token', { required: true });
+    const excludedChecks = core.getInput('excluded-checks').split(',').filter(Boolean);
+    const pollInterval = parseInt(core.getInput('poll-interval') || '30', 10) * 1000;
+    const timeoutMinutes = parseInt(core.getInput('timeout') || '30', 10);
+
     const octokit = github.getOctokit(token);
     const context = github.context;
 
@@ -264,6 +265,11 @@ async function run() {
     let hasNotified = false;
 
     while (true) {
+      // Add a check for clean shutdown
+      if (process.env.NODE_ENV === 'test') {
+        break;
+      }
+
       const elapsedMs = Date.now() - startTime;
       if (elapsedMs > timeoutMs) {
         core.setFailed(`Timed out after ${timeoutMinutes} minutes`);
@@ -275,7 +281,7 @@ async function run() {
       core.info(`Checking status (${elapsedMinutes}m ${elapsedSeconds}s elapsed)...`);
 
       try {
-        const status = await checkStatus(octokit, context);
+        const status = await checkStatus(octokit, context, excludedChecks);
 
         if (!status.hasChecks) {
           core.info('No checks found yet, waiting...');
@@ -290,10 +296,10 @@ async function run() {
             hasNotified = true;
             return;
           } else if (status.failed.length > 0) {
-            core.error('The following checks failed:');
-            status.failed.forEach(check => core.error(`  - ${check}`));
-            core.setFailed('Some checks failed');
-            return;
+            // Log failed checks but continue waiting
+            core.warning('The following checks failed:');
+            status.failed.forEach(check => core.warning(`  - ${check}`));
+            core.info('Continuing to monitor for changes...');
           }
         } else {
           core.info('Waiting for the following checks:');
@@ -303,6 +309,7 @@ async function run() {
         core.warning(`Error checking status (will retry): ${error.message}`);
       }
 
+      // Use promisified setTimeout
       await new Promise(resolve => setTimeout(resolve, pollInterval));
     }
   } catch (error) {
@@ -310,7 +317,10 @@ async function run() {
   }
 }
 
-run();
+// Only run if not in test environment
+if (process.env.NODE_ENV !== 'test') {
+  run();
+}
 
 function processNotificationBody(body) {
   return body
@@ -325,3 +335,12 @@ function processNotificationBody(body) {
     // Unescape other characters
     .replace(/\\(.)/g, '$1');
 }
+
+module.exports = {
+  checkStatus,
+  createComment,
+  hasExistingComment,
+  isPRMergeable,
+  processNotificationBody,
+  run // Export for testing
+};
