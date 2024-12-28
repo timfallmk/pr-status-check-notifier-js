@@ -13,6 +13,12 @@ jobs:
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v4
+
+      - name: Generate Changelog
+        id: generate_changelog
+        uses: timfallmk/github-changelog-generator-action@master
+        with:
+          github-token: ${{ github.token }}
       
       - name: Create Release
         uses: softprops/action-gh-release@v1
@@ -20,6 +26,7 @@ jobs:
           name: Release ${{ github.ref_name }}
           draft: false
           prerelease: false
+          body: ${{ steps.generate_changelog.outputs.changelog }}
           
       - name: Update major version tag
         run: |
