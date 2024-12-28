@@ -20,9 +20,5 @@ jobs:
           name: Release ${{ github.ref_name }}
           draft: false
           prerelease: false
-          
-      - name: Update major version tag
-        run: |
-          major_version=$(echo "${{ github.ref_name }}" | cut -d. -f1 | sed 's/v//')
-          git tag -f "${major_version}" refs/tags/${{ github.ref_name }}
-          git push -f origin "${major_version}"
+          files: |
+            dist/*
