@@ -13,7 +13,8 @@ describe('PR Status Check Notifier', () => {
     beforeEach(() => {
         // Clear all mocks before each test
         jest.clearAllMocks();
-        jest.useFakeTimers();
+        // Use modern timers
+        jest.useFakeTimers('modern');
 
         // Mock Octokit instance
         mockOctokit = {
@@ -93,26 +94,26 @@ describe('PR Status Check Notifier', () => {
 
     // Fix the async polling test
     test('should handle async polling', async () => {
-        // Set test environment
+        // Setup environment
         process.env.NODE_ENV = 'test';
         
-        // Mock required inputs
+        // Mock required inputs with proper structure
         core.getInput.mockImplementation((name) => {
-            switch (name) {
-                case 'github-token':
-                    return 'mock-token';
-                case 'excluded-checks':
-                    return '';
-                case 'poll-interval':
-                    return '1'; // Use small interval for testing
-                case 'timeout':
-                    return '1';
-                default:
-                    return '';
+            switch(name) {
+                case 'github-token': return 'mock-token';
+                case 'poll-interval': return '1';
+                case 'timeout': return '1';
+                case 'excluded-checks': return '';
+                default: return '';
             }
         });
 
-        // Mock successful checks response
+        // Mock combined status check
+        mockOctokit.rest.repos.getCombinedStatusForRef.mockResolvedValue({
+            data: { statuses: [] }
+        });
+
+        // Mock checks API response
         mockOctokit.rest.checks.listForRef.mockResolvedValue({
             data: {
                 check_runs: [{
@@ -123,31 +124,18 @@ describe('PR Status Check Notifier', () => {
             }
         });
 
-        mockOctokit.rest.repos.getCombinedStatusForRef.mockResolvedValue({
-            data: { statuses: [] }
-        });
-
-        // Mock PR event context
-        github.context.eventName = 'pull_request';
-        github.context.payload = {
-            pull_request: {
-                number: 123,
-                head: { sha: 'test-sha' }
-            }
-        };
-
-        // Run the test in isolation
         await jest.isolateModules(async () => {
             const { run } = require('../src/index');
             
-            // Start the polling
+            // Start polling and capture promise
             const runPromise = run();
             
-            // Advance timers and wait for promises to resolve
-            await jest.advanceTimersByTimeAsync(1000);
+            // Advance timers and wait for promises
+            jest.advanceTimersByTime(1000);
             await Promise.resolve();
+            await new Promise(process.nextTick);
             
-            // Verify API calls
+            // Verify API call
             expect(mockOctokit.rest.checks.listForRef).toHaveBeenCalledWith({
                 owner: 'test-owner',
                 repo: 'test-repo',
@@ -155,6 +143,7 @@ describe('PR Status Check Notifier', () => {
             });
             
             // Clean up
+            process.env.NODE_ENV = 'test';
             await runPromise;
         });
     });
@@ -261,6 +250,19 @@ describe('PR Status Check Notifier', () => {
             const { isPRMergeable } = require('../src/index');
             const result = await isPRMergeable(mockOctokit, github.context, 123);
             
+            expect(result).toBe(false);
+        });
+
+        test('should block comments when PR is blocked', async () => {
+            mockOctokit.rest.pulls.get.mockResolvedValue({
+              data: { 
+                mergeable: true,
+                mergeable_state: 'blocked'
+              }
+            });
+            
+            const { isPRMergeable } = require('../src/index');
+            const result = await isPRMergeable(mockOctokit, github.context, 123);
             expect(result).toBe(false);
         });
     });
