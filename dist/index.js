@@ -32585,7 +32585,8 @@ async function isPRMergeable(octokit, context, prNumber) {
     core.info(`PR mergeable state: ${pr.mergeable_state}`);
     
     // Skip if explicitly blocked or unmergeable
-    if (pr.mergeable_state === 'blocked' || pr.mergeable === false) {
+    // if (pr.mergeable_state === 'blocked' || pr.mergeable === false) {
+    if (pr.mergeable === false) {
       core.info(`PR is not mergeable (state: ${pr.mergeable_state})`);
       return false;
     }
