@@ -25,6 +25,7 @@ describe('PR Status Check Notifier', () => {
                 pulls: {
                     list: jest.fn(),
                     get: jest.fn(),
+                    listReviews: jest.fn(),
                 },
                 issues: {
                     createComment: jest.fn(),
@@ -179,17 +180,29 @@ describe('PR Status Check Notifier', () => {
 
     describe('Comment Functionality', () => {
         test('should create new comment when PR is mergeable', async () => {
+            // Mock PR as mergeable with approval
             mockOctokit.rest.pulls.get.mockResolvedValue({
                 data: { mergeable: true, mergeable_state: 'clean' }
             });
             
-            mockOctokit.rest.issues.createComment.mockResolvedValue({ data: {} });
+            mockOctokit.rest.pulls.listReviews.mockResolvedValue({
+                data: [{
+                    user: { id: 123 },
+                    state: 'APPROVED'
+                }]
+            });
+
+            // Mock no existing comments
+            mockOctokit.rest.issues.listComments.mockResolvedValue({
+                data: []
+            });
             
             const { createComment } = require('../src/index');
             await createComment(mockOctokit, github.context, 123, 'Test message');
             
             expect(mockOctokit.rest.issues.createComment).toHaveBeenCalledWith({
-                ...github.context.repo,
+                owner: 'test-owner',
+                repo: 'test-repo',
                 issue_number: 123,
                 body: 'Test message'
             });
@@ -234,16 +247,33 @@ describe('PR Status Check Notifier', () => {
     
     describe('PR Mergeable Status', () => {
         test('should correctly identify mergeable PR', async () => {
-            mockOctokit.rest.pulls.get.mockResolvedValue({
-                data: { mergeable: true, mergeable_state: 'clean' }
+            // First mock PR reviews to ensure approval is set
+            mockOctokit.rest.pulls.listReviews.mockResolvedValue({
+                data: [{
+                    user: { id: 123 },
+                    state: 'APPROVED'
+                }]
             });
-    
+
+            // Then mock PR status
+            mockOctokit.rest.pulls.get.mockResolvedValue({
+                data: { 
+                    mergeable: true, 
+                    mergeable_state: 'clean' 
+                }
+            });
+
             const { isPRMergeable } = require('../src/index');
             const result = await isPRMergeable(mockOctokit, github.context, 123);
             
             expect(result).toBe(true);
+            expect(mockOctokit.rest.pulls.listReviews).toHaveBeenCalledWith({
+                owner: 'test-owner',
+                repo: 'test-repo',
+                pull_number: 123
+            });
         });
-    
+
         test('should handle API errors gracefully', async () => {
             mockOctokit.rest.pulls.get.mockRejectedValue(new Error('API Error'));
     
@@ -265,6 +295,135 @@ describe('PR Status Check Notifier', () => {
             const result = await isPRMergeable(mockOctokit, github.context, 123);
             expect(result).toBe(false);
         });
+
+        test('should check PR approval status', async () => {
+            // Mock PR as mergeable
+            mockOctokit.rest.pulls.get.mockResolvedValue({
+                data: { 
+                    mergeable: true, 
+                    mergeable_state: 'clean' 
+                }
+            });
+
+            // Mock PR reviews
+            mockOctokit.rest.pulls.listReviews.mockResolvedValue({
+                data: [{
+                    user: { id: 123 },
+                    state: 'APPROVED'
+                }]
+            });
+
+            const { isPRMergeable } = require('../src/index');
+            const result = await isPRMergeable(mockOctokit, github.context, 123);
+            
+            expect(result).toBe(true);
+            expect(mockOctokit.rest.pulls.listReviews).toHaveBeenCalledWith({
+                owner: 'test-owner',
+                repo: 'test-repo',
+                pull_number: 123
+            });
+        });
+
+        test('should reject PR without approvals', async () => {
+            // Mock PR as mergeable
+            mockOctokit.rest.pulls.get.mockResolvedValue({
+                data: { 
+                    mergeable: true, 
+                    mergeable_state: 'clean' 
+                }
+            });
+
+            // Mock PR reviews with no approvals
+            mockOctokit.rest.pulls.listReviews.mockResolvedValue({
+                data: [{
+                    user: { id: 123 },
+                    state: 'COMMENTED'
+                }]
+            });
+
+            const { isPRMergeable } = require('../src/index');
+            const result = await isPRMergeable(mockOctokit, github.context, 123);
+            
+            expect(result).toBe(false);
+        });
+
+        test('should handle multiple reviews from same user', async () => {
+            // Mock PR as mergeable
+            mockOctokit.rest.pulls.get.mockResolvedValue({
+                data: { 
+                    mergeable: true, 
+                    mergeable_state: 'clean' 
+                }
+            });
+
+            // Mock multiple reviews from same user
+            mockOctokit.rest.pulls.listReviews.mockResolvedValue({
+                data: [
+                    {
+                        user: { id: 123 },
+                        state: 'APPROVED'
+                    },
+                    {
+                        user: { id: 123 },
+                        state: 'CHANGES_REQUESTED'
+                    }
+                ]
+            });
+
+            const { isPRMergeable } = require('../src/index');
+            const result = await isPRMergeable(mockOctokit, github.context, 123);
+            
+            // Should be false because latest review is CHANGES_REQUESTED
+            expect(result).toBe(false);
+        });
+
+        test('should correctly identify mergeable PR', async () => {
+            // Mock PR as mergeable
+            mockOctokit.rest.pulls.get.mockResolvedValue({
+                data: { mergeable: true, mergeable_state: 'clean' }
+            });
+
+            // Mock approved review
+            mockOctokit.rest.pulls.listReviews.mockResolvedValue({
+                data: [{
+                    user: { id: 123 },
+                    state: 'APPROVED'
+                }]
+            });
+
+            const { isPRMergeable } = require('../src/index');
+            const result = await isPRMergeable(mockOctokit, github.context, 123);
+            
+            expect(result).toBe(true);
+        });
+
+        test('should correctly identify mergeable PR', async () => {
+            // Mock PR as mergeable
+            mockOctokit.rest.pulls.get.mockResolvedValue({
+                data: { 
+                    mergeable: true, 
+                    mergeable_state: 'clean' 
+                }
+            });
+
+            // Add PR approval mock
+            mockOctokit.rest.pulls.listReviews.mockResolvedValue({
+                data: [{
+                    user: { id: 123 },
+                    state: 'APPROVED'
+                }]
+            });
+
+            const { isPRMergeable } = require('../src/index');
+            const result = await isPRMergeable(mockOctokit, github.context, 123);
+            
+            expect(result).toBe(true);
+            expect(mockOctokit.rest.pulls.listReviews).toHaveBeenCalledWith({
+                owner: 'test-owner',
+                repo: 'test-repo',
+                pull_number: 123
+            });
+        });
     });
     
     describe('Notification Deduplication', () => {
@@ -272,44 +431,35 @@ describe('PR Status Check Notifier', () => {
             jest.resetModules();
             const notificationStore = require('../src/notificationStore');
             notificationStore.notifications.clear();
-            
-            // Mock inputs
-            core.getInput.mockImplementation((name) => {
-                switch (name) {
-                    case 'github-token':
-                        return 'mock-token';
-                    case 'excluded-checks':
-                        return 'skip-check';
-                    case 'notification-message':
-                        return 'Test message';
-                    case 'poll-interval':
-                        return '30';
-                    case 'timeout':
-                        return '30';
-                    default:
-                        return '';
+
+            // Mock PR as mergeable with approval
+            mockOctokit.rest.pulls.get.mockResolvedValue({
+                data: { 
+                    mergeable: true, 
+                    mergeable_state: 'clean' 
                 }
+            });
+
+            mockOctokit.rest.pulls.listReviews.mockResolvedValue({
+                data: [{
+                    user: { id: 123 },
+                    state: 'APPROVED'
+                }]
+            });
+
+            // Mock no existing comments
+            mockOctokit.rest.issues.listComments.mockResolvedValue({
+                data: []
             });
         });
 
         test('should not send duplicate notifications', async () => {
-            // Setup mergeable PR mock
-            mockOctokit.rest.pulls.get.mockResolvedValue({
-                data: { mergeable: true, mergeable_state: 'clean' }
-            });
-
-            // Setup empty existing comments
-            mockOctokit.rest.issues.listComments.mockResolvedValue({
-                data: []
-            });
-
             const { createComment } = require('../src/index');
             
             // First notification should go through
             await createComment(mockOctokit, github.context, 123, 'Test message');
             expect(mockOctokit.rest.issues.createComment).toHaveBeenCalledTimes(1);
             
-            // Reset mock for second call
             mockOctokit.rest.issues.createComment.mockClear();
             
             // Second identical notification should be blocked
@@ -353,6 +503,47 @@ describe('PR Status Check Notifier', () => {
             // Same message to different PR should work
             await createComment(mockOctokit, github.context, 456, 'Test message');
             expect(mockOctokit.rest.issues.createComment).toHaveBeenCalledTimes(1);
+        });
+    });
+
+    describe('Notification Deduplication', () => {
+        beforeEach(() => {
+            jest.resetModules();
+            // Clear notification store
+            const notificationStore = require('../src/notificationStore');
+            notificationStore.notifications.clear();
+            
+            // Mock PR as mergeable with approval
+            mockOctokit.rest.pulls.get.mockResolvedValue({
+                data: { 
+                    mergeable: true, 
+                    mergeable_state: 'clean' 
+                }
+            });
+
+            mockOctokit.rest.pulls.listReviews.mockResolvedValue({
+                data: [{
+                    user: { id: 123 },
+                    state: 'APPROVED'
+                }]
+            });
+
+            // Mock no existing comments
+            mockOctokit.rest.issues.listComments.mockResolvedValue({
+                data: []
+            });
+        });
+
+        test('should not send duplicate notifications', async () => {
+            const { createComment } = require('../src/index');
+            
+            await createComment(mockOctokit, github.context, 123, 'Test message');
+            expect(mockOctokit.rest.issues.createComment).toHaveBeenCalledTimes(1);
+            
+            mockOctokit.rest.issues.createComment.mockClear();
+            
+            await createComment(mockOctokit, github.context, 123, 'Test message');
+            expect(mockOctokit.rest.issues.createComment).not.toHaveBeenCalled();
         });
     });
 });

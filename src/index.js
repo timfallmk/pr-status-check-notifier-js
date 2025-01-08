@@ -28,6 +28,27 @@ async function hasExistingComment(octokit, context, prNumber, message) {
   }
 }
 
+async function isPRApproved(octokit, context, prNumber) {
+  try {
+    const { data: reviews } = await octokit.rest.pulls.listReviews({
+      ...context.repo,
+      pull_number: prNumber
+    });
+    
+    // Get latest review from each reviewer
+    const latestReviews = new Map();
+    reviews.forEach(review => {
+      latestReviews.set(review.user.id, review.state);
+    });
+    
+    // Check if any latest review is APPROVED
+    return Array.from(latestReviews.values()).includes('APPROVED');
+  } catch (error) {
+    core.warning(`Failed to check PR approval status: ${error.message}`);
+    return false;
+  }
+}
+
 async function isPRMergeable(octokit, context, prNumber) {
   try {
     const { data: pr } = await octokit.rest.pulls.get({
@@ -37,10 +58,14 @@ async function isPRMergeable(octokit, context, prNumber) {
     
     core.info(`PR mergeable state: ${pr.mergeable_state}`);
     
-    // Skip if explicitly blocked or unmergeable
-    // if (pr.mergeable_state === 'blocked' || pr.mergeable === false) {
     if (pr.mergeable === false) {
       core.info(`PR is not mergeable (state: ${pr.mergeable_state})`);
+      return false;
+    }
+    
+    // Add approval check
+    if (!await isPRApproved(octokit, context, prNumber)) {
+      core.info('PR is not approved');
       return false;
     }
     
