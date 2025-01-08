@@ -6,8 +6,8 @@ const notificationStore = require('./notificationStore');
 // Track notifications at file scope
 const sentNotifications = new Set();
 
-function createNotificationId(prNumber, message) {
-  return `pr-${prNumber}-${message}`;
+function createNotificationId(prNumber) {
+  return `pr-${prNumber}`;
 }
 
 async function hasExistingComment(octokit, context, prNumber, message) {
@@ -58,7 +58,7 @@ async function createComment(octokit, context, prNumber, body) {
     return;
   }
 
-  const notificationId = createNotificationId(prNumber, body);
+  const notificationId = createNotificationId(prNumber);
   
   // Check if already sent this session
   if (sentNotifications.has(notificationId)) {

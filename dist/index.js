@@ -32553,8 +32553,8 @@ const notificationStore = __nccwpck_require__(5813);
 // Track notifications at file scope
 const sentNotifications = new Set();
 
-function createNotificationId(prNumber, message) {
-  return `pr-${prNumber}-${message}`;
+function createNotificationId(prNumber) {
+  return `pr-${prNumber}`;
 }
 
 async function hasExistingComment(octokit, context, prNumber, message) {
@@ -32605,7 +32605,7 @@ async function createComment(octokit, context, prNumber, body) {
     return;
   }
 
-  const notificationId = createNotificationId(prNumber, body);
+  const notificationId = createNotificationId(prNumber);
   
   // Check if already sent this session
   if (sentNotifications.has(notificationId)) {
@@ -32910,12 +32910,12 @@ class NotificationStore {
     this.notifications = new Set();
   }
 
-  hasNotification(prNumber, message) {
-    return this.notifications.has(`pr-${prNumber}-${message}`);
+  hasNotification(prNumber) {
+    return this.notifications.has(`pr-${prNumber}`);
   }
 
-  addNotification(prNumber, message) {
-    this.notifications.add(`pr-${prNumber}-${message}`);
+  addNotification(prNumber) {
+    this.notifications.add(`pr-${prNumber}`);
   }
 }
 

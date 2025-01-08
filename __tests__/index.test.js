@@ -316,5 +316,43 @@ describe('PR Status Check Notifier', () => {
             await createComment(mockOctokit, github.context, 123, 'Test message');
             expect(mockOctokit.rest.issues.createComment).not.toHaveBeenCalled();
         });
+
+        test('should block different messages to same PR', async () => {
+            mockOctokit.rest.pulls.get.mockResolvedValue({
+                data: { mergeable: true, mergeable_state: 'clean' }
+            });
+            mockOctokit.rest.issues.listComments.mockResolvedValue({ data: [] });
+
+            const { createComment } = require('../src/index');
+            
+            // First notification
+            await createComment(mockOctokit, github.context, 123, 'First message');
+            expect(mockOctokit.rest.issues.createComment).toHaveBeenCalledTimes(1);
+            
+            mockOctokit.rest.issues.createComment.mockClear();
+            
+            // Different message to same PR should be blocked
+            await createComment(mockOctokit, github.context, 123, 'Second message');
+            expect(mockOctokit.rest.issues.createComment).not.toHaveBeenCalled();
+        });
+
+        test('should allow same message to different PRs', async () => {
+            mockOctokit.rest.pulls.get.mockResolvedValue({
+                data: { mergeable: true, mergeable_state: 'clean' }
+            });
+            mockOctokit.rest.issues.listComments.mockResolvedValue({ data: [] });
+
+            const { createComment } = require('../src/index');
+            
+            // First PR notification
+            await createComment(mockOctokit, github.context, 123, 'Test message');
+            expect(mockOctokit.rest.issues.createComment).toHaveBeenCalledTimes(1);
+            
+            mockOctokit.rest.issues.createComment.mockClear();
+            
+            // Same message to different PR should work
+            await createComment(mockOctokit, github.context, 456, 'Test message');
+            expect(mockOctokit.rest.issues.createComment).toHaveBeenCalledTimes(1);
+        });
     });
 });

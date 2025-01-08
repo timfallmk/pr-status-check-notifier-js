@@ -3,12 +3,12 @@ class NotificationStore {
     this.notifications = new Set();
   }
 
-  hasNotification(prNumber, message) {
-    return this.notifications.has(`pr-${prNumber}-${message}`);
+  hasNotification(prNumber) {
+    return this.notifications.has(`pr-${prNumber}`);
   }
 
-  addNotification(prNumber, message) {
-    this.notifications.add(`pr-${prNumber}-${message}`);
+  addNotification(prNumber) {
+    this.notifications.add(`pr-${prNumber}`);
   }
 }
 
