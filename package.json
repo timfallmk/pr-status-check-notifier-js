@@ -14,8 +14,8 @@
     "pr",
     "checks"
   ],
-  "author": "Your Name",
-  "license": "MIT",
+  "author": "Tim Fall",
+  "license": "GPLv3",
   "dependencies": {
     "@actions/core": "^1.11.1",
     "@actions/github": "^6.0.0",
