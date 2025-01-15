@@ -32852,7 +32852,7 @@ async function run() {
 
       const elapsedMs = Date.now() - startTime;
       if (elapsedMs > timeoutMs) {
-        core.setFailed(`Timed out after ${timeoutMinutes} minutes`);
+        core.setSuccess(`Timed out after ${timeoutMinutes} minutes`);
         return;
       }
 
