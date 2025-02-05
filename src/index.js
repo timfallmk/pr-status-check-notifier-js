@@ -305,7 +305,7 @@ async function run() {
 
       const elapsedMs = Date.now() - startTime;
       if (elapsedMs > timeoutMs) {
-        core.setSuccess(`Timed out after ${timeoutMinutes} minutes`);
+        core.info(`Timed out after ${timeoutMinutes} minutes`);
         return;
       }
 
